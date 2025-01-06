@@ -4,8 +4,7 @@ from pydantic import BaseModel
 import mysql.connector
 from mysql.connector import Error
 from typing import Dict, Any, List, Optional
-from datetime import datetime
-import json
+import os
 
 class Customer(BaseModel):
     customer_id: str
@@ -15,13 +14,18 @@ class Customer(BaseModel):
 
 class MySQLConnector:
     def __init__(self):
+        self.MYSQL_HOST = os.getenv('MYSQL_HOST', 'tech0-db-step4-studentrdb-3.mysql.database.azure.com')
+        self.MYSQL_USER = os.getenv('MYSQL_USER', 'tech0gen7student')
+        self.MYSQL_PASSWORD = os.getenv('MYSQL_PASSWORD', 'vY7JZNfU')
+        self.MYSQL_DATABASE = os.getenv('MYSQL_DATABASE', 'gen9-practical')
+        self.SSL_CA = os.getenv('SSL_CA', '/home/site/certificates/DigiCertGlobalRootCA.crt.pem')
         self.config = {
-            'host': 'tech0-db-step4-studentrdb-3.mysql.database.azure.com',
-            'user': 'tech0gen7student',
-            'password': 'vY7JZNfU',
-            'database': 'gen9-practical',
+            'host': self.MYSQL_HOST,
+            'user': self.MYSQL_USER,
+            'password': self.MYSQL_PASSWORD,
+            'database': self.MYSQL_DATABASE,
             'client_flags': [mysql.connector.ClientFlag.SSL],
-            'ssl_ca': 'DigiCertGlobalRootCA.crt.pem'
+            'ssl_ca': self.SSL_CA
         }
         self.connection = None
 
