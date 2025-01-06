@@ -1,92 +1,123 @@
-##app.py
-from fastapi import FastAPI
-from fastapi import FastAPI, Request, HTTPException  # FastAPIの主要モジュールとHTTP例外をインポート
-from fastapi.responses import JSONResponse  # JSONレスポンスを返すためのモジュールをインポート
-from fastapi.middleware.cors import CORSMiddleware  # CORSミドルウェアをインポート
-import mysql.connector  # MySQLデータベースとの接続を行うためのモジュールをインポート
-from mysql.connector import errorcode  # MySQLエラーコードの管理モジュールをインポート
-import os
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import mysql.connector
+from mysql.connector import Error
+from typing import Dict, Any, List, Optional
+from datetime import datetime
+import json
+
+class Customer(BaseModel):
+    customer_id: str
+    customer_name: str
+    age: int
+    gender: str
+
+class MySQLConnector:
+    def __init__(self):
+        self.config = {
+            'host': 'tech0-db-step4-studentrdb-3.mysql.database.azure.com',
+            'user': 'tech0gen7student',
+            'password': 'vY7JZNfU',
+            'database': 'gen9-practical',
+            'client_flags': [mysql.connector.ClientFlag.SSL],
+            'ssl_ca': 'DigiCertGlobalRootCA.crt.pem'
+        }
+        self.connection = None
+
+    def connect(self):
+        try:
+            if not self.connection or not self.connection.is_connected():
+                self.connection = mysql.connector.connect(**self.config)
+        except Error as e:
+            print(f"Error: {e}")
+            raise
+
+    def disconnect(self):
+        if self.connection and self.connection.is_connected():
+            self.connection.close()
+
+    def execute_query(self, query: str, params: tuple = None) -> Optional[List[Dict]]:
+        try:
+            self.connect()
+            cursor = self.connection.cursor(dictionary=True)
+            cursor.execute(query, params)
+            
+            if query.strip().upper().startswith('SELECT'):
+                result = cursor.fetchall()
+                return result
+            else:
+                self.connection.commit()
+                return None
+                
+        except Error as e:
+            print(f"Error: {e}")
+            raise
+        finally:
+            if cursor:
+                cursor.close()
 
 app = FastAPI()
 
-# CORSの設定を追加。全てのオリジン、メソッド、ヘッダーを許可
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # すべてのオリジン（アクセス元）を許可
-    allow_credentials=True,  # Cookieなどの認証情報を許可
-    allow_methods=["*"],  # すべてのHTTPメソッドを許可（GET, POST, PUT, DELETEなど）
-    allow_headers=["*"],  # すべてのヘッダーを許可
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# データベース接続情報の設定（接続先、ユーザー名、パスワード、データベース名、SSLの設定）
-config = {
-    'host': os.getenv('DB_HOST'),
-    'user': os.getenv('DB_USER'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': os.getenv('DB_NAME'),
-    'client_flags': [mysql.connector.ClientFlag.SSL],
-    'ssl_ca': '/home/site/certificates/DigiCertGlobalRootCA.crt.pem'
-}
-
-# データベース接続を行い、ユーザー情報を取得する関数
-def get_users_from_db():
-    try:
-        # データベース接続を確立
-        conn = mysql.connector.connect(**config)
-        print("Connection established")  # 接続成功のメッセージを表示
-
-        cursor = conn.cursor()  # カーソルを作成
-        # ユーザー情報を取得するSQLクエリ（実際のテーブル名とカラム名に変更が必要）
-        query = "SELECT username, password FROM users;"
-        cursor.execute(query)  # SQLクエリを実行
-
-        # 取得したデータを辞書形式に変換（ユーザー名をキー、パスワードを値として保存）
-        users = {username: password for username, password in cursor.fetchall()}
-
-        cursor.close()  # カーソルを閉じる
-        conn.close()  # 接続を閉じる
-        return users  # 取得したユーザー情報を返す
-
-    except mysql.connector.Error as err:
-        # エラーが発生した場合の処理
-        print(f"Error connecting to the database: {err}")  # エラーメッセージを表示
-        return {}  # 空の辞書を返す
+db = MySQLConnector()
 
 @app.get("/")
-def read_root():
-    return {"Hello": "World"}
+def index():
+    return {"message": "FastAPI top page!"}
 
-# /nightにアクセスがあった場合に実行される関数
-@app.get("/night")
-async def hello_night_world():
-    return "Good night!"  # シンプルなテキストメッセージを返す
+@app.post("/customers")
+def create_customer(customer: Customer):
+    query = """
+    INSERT INTO customers (customer_id, customer_name, age, gender)
+    VALUES (%s, %s, %s, %s)
+    """
+    values = (customer.customer_id, customer.customer_name, customer.age, customer.gender)
+    db.execute_query(query, values)
+    
+    select_query = "SELECT * FROM customers WHERE customer_id = %s"
+    result = db.execute_query(select_query, (customer.customer_id,))
+    return result[0] if result else None
 
-# /night/{id} にアクセスがあった場合に実行される関数
-@app.get("/night/{id}")
-async def good_night(id: str):
-    # {id} にはユーザーから送られてきた文字列が入る
-    return f'{id}さん、「早く寝てね」'  # 受け取ったidを使ってカスタムメッセージを返す
+@app.get("/customers")
+def read_one_customer(customer_id: str = Query(...)):
+    query = "SELECT * FROM customers WHERE customer_id = %s"
+    result = db.execute_query(query, (customer_id,))
+    if not result:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return result[0]
 
-# '/login'エンドポイントを定義し、POSTメソッドのみを許可します
-@app.post("/login")
-async def login(request: Request):
-    # リクエストのJSONデータを非同期で取得します
-    data = await request.json()
+@app.get("/allcustomers")
+def read_all_customer():
+    query = "SELECT * FROM customers"
+    result = db.execute_query(query)
+    return result if result else []
+
+@app.put("/customers")
+def update_customer(customer: Customer):
+    query = """
+    UPDATE customers 
+    SET customer_name = %s, age = %s, gender = %s 
+    WHERE customer_id = %s
+    """
+    values = (customer.customer_name, customer.age, customer.gender, customer.customer_id)
+    db.execute_query(query, values)
     
-    # JSONデータから'username'を取得します。存在しない場合はNoneを返します
-    username = data.get('username')
-    
-    # JSONデータから'password'を取得します。存在しない場合はNoneを返します
-    password = data.get('password')
-    
-    # データベースからユーザー情報を取得
-    users = get_users_from_db()
-    
-    # ユーザー名がusers辞書に存在し、かつパスワードが一致するか確認します
-    if username in users and users[username] == password:
-        # 認証成功の場合、歓迎メッセージを含むJSONレスポンスを返します
-        return JSONResponse(content={'message': f'ようこそ！{username}さん'})
-    else:
-        # 認証失敗の場合、エラーメッセージを含むJSONレスポンスと
-        # HTTP status code 401（Unauthorized）を返します
-        raise HTTPException(status_code=401, detail="認証失敗")
+    select_query = "SELECT * FROM customers WHERE customer_id = %s"
+    result = db.execute_query(select_query, (customer.customer_id,))
+    if not result:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return result[0]
+
+@app.delete("/customers")
+def delete_customer(customer_id: str = Query(...)):
+    query = "DELETE FROM customers WHERE customer_id = %s"
+    db.execute_query(query, (customer_id,))
+    return {"customer_id": customer_id, "status": "deleted"}
